@@ -1,53 +1,50 @@
-﻿using System.Text.Json;
+﻿using Microsoft.AnalysisServices;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Configuration;
+using Serilog;
 using SsasMcpServer.Services;
-using SsasMcpServer.Services.Interfaces;
-using SsasMcpServer.Models.Query;
-using SsasMcpServer.Core.Mocks;
+using SsasMcpServer.Tools;
 
-// Build a generic host to use the same DI and configuration stack used by the project
-using var host = Host.CreateDefaultBuilder(args)
-    .ConfigureAppConfiguration((ctx, cfg) =>
-    {
-        // keep default config sources (appsettings.json, env, args)
-    })
-    .ConfigureServices((ctx, services) =>
-    {
-        // Register the real SSAS-related services
-        services.AddSsasServices(ctx.Configuration);
+// Configure Serilog
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .WriteTo.Console()
+    .WriteTo.File("logs/ssas-mcp-server-.log", 
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: 7)
+    .CreateLogger();
 
-        // For a runnable demo without an actual SSAS server, override IQueryService with a mock
-        //services.AddSingleton<IQueryService, MockQueryService>();
-    })
-    .Build();
-
-// Resolve the query service and run the sample request
-var queryService = host.Services.GetRequiredService<IQueryService>();
-
-var queryRequest = new QueryRequest
+try
 {
-    Columns = new List<string> { "'Product Category'[Product Category Name]", "'Product'[Product Name]" },
-    Measures = new List<string> { "[Internet Total Sales]" },
-    Filters = new List<QueryFilter>
-    {
-        new() { Column = "'Date'[Calendar Year]", Operator = FilterOperator.Equals, Value = 2014 }
-    },
-    Sorts = new List<QuerySort>
-    {
-        new() { Column = "[Internet Total Sales]", Direction = SortDirection.Descending }
-    },
-    MaxRows = 100,
-    Culture = "en-US"
-};
 
-var result = await queryService.ExecuteQueryAsync(queryRequest);
+    Log.Information("Starting SSAS MCP Server");
 
-// Print result as JSON
-var json = JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
-Console.WriteLine(json);
+    Log.Information("Current Directory: {Directory}", Directory.GetCurrentDirectory());
 
-// Dispose host cleanly
-await host.StopAsync();
+    var builder = Host.CreateApplicationBuilder(args);
 
+    builder.Logging.AddSerilog();
+
+    builder.Configuration
+        .SetBasePath(Directory.GetCurrentDirectory())
+        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+        .AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json",
+            optional: true, reloadOnChange: true)
+        .AddEnvironmentVariables()
+        .AddCommandLine(args);
+
+    builder.Services
+        .AddSsasServices(builder.Configuration)
+        .AddMcpServerTools();
+
+    await builder.Build().RunAsync();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "Host terminated unexpectedly");
+}
+finally
+{
+    Log.CloseAndFlush();
+}
