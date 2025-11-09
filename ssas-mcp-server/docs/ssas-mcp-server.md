@@ -153,6 +153,52 @@ Note: Concrete implementations live in `Services/Implementations/` (e.g., `Query
 
 Purpose: small tooling support library. Contains references and helpers; not central to the API surface.
 
+## Tools
+
+This project exposes a set of MCP tools for inspecting model metadata and running DAX queries. The tools map to the public service methods in `IMetadataService` and `IQueryService` and accept/return the POCO models defined in `SsasMcpServer.Models` (notably the `QueryRequest` and `QueryResult` shapes).
+
+Available tools (name → purpose):
+
+- `mcp_ssas-mcp-serv_get_model_metadata` — Retrieve the complete tabular model metadata (database name, supported cultures, dimensions, measures, KPIs, last processed timestamp, compatibility level).
+- `mcp_ssas-mcp-serv_get_dimensions` — List all dimensions with their attributes and hierarchies.
+- `mcp_ssas-mcp-serv_get_dimension` — Get a single dimension's detailed metadata. Parameters: `dimensionName` (string), optional `culture` (string).
+- `mcp_ssas-mcp-serv_get_measures` — List all measures, their DAX expressions and format strings.
+- `mcp_ssas-mcp-serv_get_kp_is` — List configured KPIs.
+- `mcp_ssas-mcp-serv_get_hierarchies` — Retrieve all hierarchies and levels across dimensions.
+- `mcp_ssas-mcp-serv_generate_dax_query` — Generate DAX text from a `QueryRequest` without executing it.
+- `mcp_ssas-mcp-serv_validate_query` — Validate a `QueryRequest` against model metadata (useful before execution).
+- `mcp_ssas-mcp-serv_execute_query` — Execute a query built from `QueryRequest` and return a `QueryResult` (rows, column names, DAX used, execution time).
+
+Notes and usage guidance:
+
+- The tools accept model types from `SsasMcpServer.Models`. Construct a `QueryRequest` with `Columns`, `Measures`, `Filters`, `Sorts`, `TopN`, `MaxRows`, and optional `Culture`.
+- Filters use the `FilterOperator` enum (Equals, Contains, In, etc.). Use `IDaxQueryBuilder` conventions (identifier escaping) when composing raw DAX strings.
+- For culture-sensitive names or descriptions, pass `culture` = `en-US` (or any supported culture reported by the model metadata).
+- The `execute` tool will honor `MaxRows` and return `QueryResult.IsTruncated` when results are truncated.
+
+Small example `QueryRequest` (JSON form):
+
+```json
+{
+  "Columns": ["Date[Calendar Year]"],
+  "Measures": ["Internet Sales[Internet Total Sales]"],
+  "Filters": [ { "Column": "Date[Calendar Year]", "Operator": "Equals", "Value": 2014 } ],
+  "Sorts": [ { "Column": "Date[Calendar Year]", "Direction": "Ascending" } ],
+  "MaxRows": 1000,
+  "Culture": "en-US"
+}
+```
+
+Typical flow:
+
+1. Call `mcp_ssas-mcp-serv_get_model_metadata` to inspect available dimensions/measures and supported cultures.
+2. Construct a `QueryRequest` (using the exact column/measure names from metadata).
+3. Optionally call `mcp_ssas-mcp-serv_generate_dax_query` to preview the DAX text.
+4. Call `mcp_ssas-mcp-serv_validate_query` to catch issues early.
+5. Call `mcp_ssas-mcp-serv_execute_query` to run the query and receive a `QueryResult`.
+
+If you expose these tools over HTTP (recommended for integration tests), map each tool to a single endpoint that accepts/returns JSON using the same model contracts.
+
 ## How to run (quick)
 
 1. Configure `appsettings.json` or `appsettings.Development.json` with the `SsasConnection` section and optionally `McpServer` section.
